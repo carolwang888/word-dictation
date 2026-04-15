@@ -1,3 +1,14 @@
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { WordsProvider } from './context/WordsContext';
+import Layout from './components/Layout';
+import Home from './pages/Home';
+import GroupDetail from './pages/GroupDetail';
+import StudyPage from './pages/StudyPage';
+import DictationPage from './pages/DictationPage';
+import ErrorWords from './pages/ErrorWords';
+import ErrorDictationPage from './pages/ErrorDictationPage';
+import ManageWords from './pages/ManageWords';
+
 function App() {
     return (
         <WordsProvider>
@@ -17,3 +28,5 @@ function App() {
         </WordsProvider>
     );
 }
+
+export default App;
