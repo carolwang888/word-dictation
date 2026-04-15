@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Sans:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --coral-50: #fff5f5;
+  --coral-100: #ffe3e3;
+  --coral-200: #ffc9c9;
+  --coral-300: #ffa8a8;
+  --coral-400: #ff8787;
+  --coral-500: #ff6b6b;
+  --coral-600: #fa5252;
+  --coral-700: #f03e3e;
+  --pink-100: #fce4ec;
+  --pink-200: #f8bbd9;
+  --pink-300: #f48fb1;
+}
+
+body {
+  font-family: 'Noto Sans SC', 'Noto Sans', sans-serif;
+  background: linear-gradient(135deg, #fff5f5 0%, #fce4ec 100%);
+  min-height: 100vh;
+}
+
+/* IPA 音标字体 */
+.phonetic {
+  font-family: 'Noto Sans', 'DejaVu Sans', 'Arial Unicode MS', sans-serif;
+}
+
+.font-handwritten {
+  font-family: 'Caveat', cursive;
+}
+
+.card-hover {
+  transition: all 0.2s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(255, 107, 107, 0.25);
+}
+
+.btn-primary {
+  @apply bg-coral-500 hover:bg-coral-600 text-white font-medium py-3 px-6 rounded-xl transition-all duration-200;
+  @apply shadow-lg shadow-coral-500/30 hover:shadow-xl hover:shadow-coral-500/40;
+}
+
+.btn-secondary {
+  @apply bg-white/80 hover:bg-white text-coral-600 font-medium py-3 px-6 rounded-xl transition-all duration-200;
+  @apply border border-coral-200 hover:border-coral-300;
+}
+
+/* Sakura animation */
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-10px) rotate(5deg); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Flip card */
+.flip-card {
+  perspective: 1000px;
+}
+
+.flip-card-inner {
+  transition: transform 0.6s;
+  transform-style: preserve-3d;
+}
+
+.flip-card-inner.flipped {
+  transform: rotateY(180deg);
+}
+
+.flip-card-front, .flip-card-back {
+  backface-visibility: hidden;
+}
+
+.flip-card-back {
+  transform: rotateY(180deg);
+}
