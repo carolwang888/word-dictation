@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useWords } from '../context/WordsContext';
 import { useTTS } from '../hooks/useTTS';
-import { ArrowLeft, Play, Pause, Square, RotateCcw, Check, AlertCircle, Save, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Play, Pause, Square, RotateCcw, Check, AlertCircle, Save, Clock, ChevronLeft, ChevronRight, Settings, Volume2 } from 'lucide-react';
 
 const STORAGE_KEY = 'error-dictation-progress';
 
@@ -13,11 +13,13 @@ function normalizeForCompare(str) {
 export default function ErrorDictationPage() {
   const [searchParams] = useSearchParams();
   const { incrementErrorCount, initialized, chapters } = useWords();
-  const { playDictation, stop } = useTTS();
+  const { playDictation, stop, updatePlaybackParams } = useTTS();
   const navigate = useNavigate();
   
   const [phase, setPhase] = useState('setup');
-  const [speedMode, setSpeedMode] = useState('normal');
+  // 使用连续的速度和间隔值代替 speedMode 两档选择
+  const [playRate, setPlayRate] = useState(0.8);
+  const [playInterval, setPlayInterval] = useState(5);
   const [currentWordIndex, setCurrentWordIndex] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -31,7 +33,6 @@ export default function ErrorDictationPage() {
   
   const inputRefs = useRef({});
   const playPromiseRef = useRef(null);
-  const abortRef = useRef(false);
   
   // 用于跟踪 localStorage 读取状态的 ref，防止 StrictMode 下 useEffect 执行两次导致数据丢失
   const loadAttemptRef = useRef(false);
@@ -40,8 +41,10 @@ export default function ErrorDictationPage() {
   // 记录上一次加载时的 t 参数，用于检测是否需要重新加载（第二轮听写）
   const lastTRef = useRef(null);
 
-  const rate = speedMode === 'normal' ? 0.8 : 1.28;
-  const interval = speedMode === 'normal' ? 5000 : 2000;
+  // 当速度/间隔改变时，实时更新 TTS 参数（在播放中也立即生效）
+  useEffect(() => {
+    updatePlaybackParams(playRate, playInterval * 1000);
+  }, [playRate, playInterval, updatePlaybackParams]);
 
   // 当 URL 的 t 参数变化时（第二轮听写），重置所有状态以重新加载数据
   const currentT = searchParams.get('t');
@@ -123,7 +126,8 @@ export default function ErrorDictationPage() {
       words: errorWords.map(w => w.id),
       answers,
       currentWordIndex,
-      speedMode,
+      playRate,
+      playInterval,
       completedCount: Object.keys(answers).length,
       savedAt: new Date().toISOString()
     };
@@ -133,7 +137,7 @@ export default function ErrorDictationPage() {
       total: errorWords.length,
       date: data.savedAt
     });
-  }, [errorWords, answers, currentWordIndex, speedMode]);
+  }, [errorWords, answers, currentWordIndex, playRate, playInterval]);
 
   // 加载进度
   const loadProgress = useCallback(() => {
@@ -143,7 +147,8 @@ export default function ErrorDictationPage() {
         const data = JSON.parse(saved);
         setAnswers(data.answers || {});
         setCurrentWordIndex(data.currentWordIndex || 0);
-        setSpeedMode(data.speedMode || 'normal');
+        if (data.playRate) setPlayRate(data.playRate);
+        if (data.playInterval) setPlayInterval(data.playInterval);
         return data;
       } catch (e) {
         return null;
@@ -168,19 +173,19 @@ export default function ErrorDictationPage() {
     
     playPromiseRef.current = playDictation(
       errorWords.slice(fromIndex),
-      rate,
-      interval,
+      playRate,
+      playInterval * 1000,
       (idx) => {
         const actualIdx = idx + fromIndex;
         setCurrentWordIndex(actualIdx);
-        inputRefs.current[actualIdx]?.focus();
+        // 【修复】不自动 focus，避免打断用户正在输入的光标
       }
     );
     
     playPromiseRef.current.then(() => {
       setIsPlaying(false);
     });
-  }, [errorWords, rate, interval, playDictation]);
+  }, [errorWords, playRate, playInterval, playDictation]);
 
   const handleStart = useCallback(() => {
     clearProgress();
@@ -194,35 +199,36 @@ export default function ErrorDictationPage() {
     }
   }, [loadProgress, startDictation]);
 
+  // 【修复】暂停时直接调用 stop() 彻底终止播放循环和语音，
+  // 而不是 speechSynthesis.pause()，避免播放循环继续运行导致读音混乱
   const handlePause = useCallback(() => {
-    window.speechSynthesis.pause();
-    if (playPromiseRef.current) {
-      playPromiseRef.current.cancel?.();
-    }
+    stop();
     setIsPaused(true);
     setIsPlaying(false);
-  }, []);
+  }, [stop]);
 
+  // 【修复】继续播放时从 currentWordIndex 重新启动 playDictation，
+  // 而不是 speechSynthesis.resume()，因为 stop() 已经彻底终止了之前的循环
   const handleContinue = useCallback(() => {
-    window.speechSynthesis.resume();
     setIsPaused(false);
     setIsPlaying(true);
     
+    // playDictation 内部会重置 abortRef，所以可以直接调用
     playPromiseRef.current = playDictation(
       errorWords.slice(currentWordIndex),
-      rate,
-      interval,
+      playRate,
+      playInterval * 1000,
       (idx) => {
         const actualIdx = idx + currentWordIndex;
         setCurrentWordIndex(actualIdx);
-        inputRefs.current[actualIdx]?.focus();
+        // 不自动 focus，避免打断用户正在输入的光标
       }
     );
     
     playPromiseRef.current.then(() => {
       setIsPlaying(false);
     });
-  }, [errorWords, currentWordIndex, rate, interval, playDictation]);
+  }, [errorWords, currentWordIndex, playRate, playInterval, playDictation]);
 
   const handleStop = useCallback(() => {
     stop();
@@ -230,6 +236,29 @@ export default function ErrorDictationPage() {
     setIsPaused(false);
     setPhase('setup');
   }, [stop]);
+
+  // 重播当前单词
+  const handleReplay = useCallback(() => {
+    const currentWord = errorWords[currentWordIndex];
+    if (currentWord) {
+      const utterance = new SpeechSynthesisUtterance(currentWord.word);
+      utterance.lang = 'en-GB';
+      utterance.rate = playRate;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      
+      // 使用保存的语音
+      const savedVoiceName = localStorage.getItem('selected-voice');
+      const voices = window.speechSynthesis.getVoices();
+      const savedVoice = voices.find(v => v.name === savedVoiceName);
+      if (savedVoice) {
+        utterance.voice = savedVoice;
+        utterance.lang = savedVoice.lang;
+      }
+      
+      window.speechSynthesis.speak(utterance);
+    }
+  }, [errorWords, currentWordIndex, playRate]);
 
   const handleSubmit = useCallback(() => {
     if (isPlaying) {
@@ -390,33 +419,55 @@ export default function ErrorDictationPage() {
               </div>
             )}
             
-            {/* Speed Mode */}
-            <div className="mb-6">
-              <p className="text-sm text-gray-500 mb-3">选择速度</p>
-              <div className="flex gap-3 justify-center">
-                <button
-                  onClick={() => setSpeedMode('normal')}
-                  className={`px-6 py-3 rounded-xl transition-all ${
-                    speedMode === 'normal'
-                      ? 'bg-coral-500 text-white shadow-lg'
-                      : 'bg-white text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <p className="font-medium">1倍速</p>
-                  <p className="text-xs opacity-75">5秒间隔</p>
-                </button>
-                
-                <button
-                  onClick={() => setSpeedMode('fast')}
-                  className={`px-6 py-3 rounded-xl transition-all ${
-                    speedMode === 'fast'
-                      ? 'bg-coral-500 text-white shadow-lg'
-                      : 'bg-white text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <p className="font-medium">1.6倍速</p>
-                  <p className="text-xs opacity-75">2秒间隔</p>
-                </button>
+            {/* 【修复】Speed & Interval Settings - 使用滑块自由调节，替代原来的两档选择 */}
+            <div className="mb-6 bg-white/60 rounded-xl p-4 text-left">
+              <p className="text-sm font-medium text-gray-600 flex items-center gap-1 mb-3">
+                <Settings size={14} />
+                播报设置（可随时调整）
+              </p>
+              
+              {/* Rate Slider */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm text-gray-500">播报速度</label>
+                  <span className="text-sm font-medium text-coral-600">{playRate.toFixed(1)}x</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2.0"
+                  step="0.1"
+                  value={playRate}
+                  onChange={(e) => setPlayRate(parseFloat(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-coral-500"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>0.5x 慢速</span>
+                  <span>1.0x 正常</span>
+                  <span>2.0x 快速</span>
+                </div>
+              </div>
+              
+              {/* Interval Slider */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm text-gray-500">单词间隔</label>
+                  <span className="text-sm font-medium text-coral-600">{playInterval} 秒</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="15"
+                  step="1"
+                  value={playInterval}
+                  onChange={(e) => setPlayInterval(parseInt(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-coral-500"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>1秒</span>
+                  <span>8秒</span>
+                  <span>15秒</span>
+                </div>
               </div>
             </div>
             
@@ -447,6 +498,12 @@ export default function ErrorDictationPage() {
               </div>
             </div>
           )}
+          
+          <div className="bg-pink-50 rounded-xl p-4 text-center">
+            <p className="text-sm text-pink-600">
+              💡 音频会自动播放，请输入你听到的单词 · 可随时暂停并保存进度
+            </p>
+          </div>
         </div>
       )}
       
@@ -455,8 +512,9 @@ export default function ErrorDictationPage() {
         <div className="space-y-4">
           {/* Progress with Controls */}
           <div className="bg-white rounded-2xl shadow-lg p-4">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
+                {/* 上一个单词 */}
                 <button
                   onClick={() => {
                     stop();
@@ -469,6 +527,7 @@ export default function ErrorDictationPage() {
                 >
                   <ChevronLeft size={20} />
                 </button>
+                {/* 下一个单词 */}
                 <button
                   onClick={() => {
                     stop();
@@ -480,6 +539,15 @@ export default function ErrorDictationPage() {
                   className="p-2 text-gray-500 hover:text-coral-500 disabled:opacity-30 disabled:cursor-not-allowed bg-gray-100 rounded-lg"
                 >
                   <ChevronRight size={20} />
+                </button>
+                {/* 重播当前单词 */}
+                <button
+                  onClick={handleReplay}
+                  disabled={currentWordIndex < 0}
+                  className="p-2 text-gray-500 hover:text-coral-500 disabled:opacity-30 disabled:cursor-not-allowed bg-gray-100 rounded-lg"
+                  title="重播当前单词"
+                >
+                  <Volume2 size={20} />
                 </button>
               </div>
               <span className="text-sm text-gray-500">
@@ -503,17 +571,55 @@ export default function ErrorDictationPage() {
                 </button>
               )}
             </div>
-            <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
+            
+            <div className="bg-gray-100 rounded-full h-2 overflow-hidden mb-2">
               <div 
                 className="h-full bg-gradient-to-r from-coral-400 to-pink-400 transition-all duration-300"
                 style={{ width: `${((currentWordIndex + 1) / errorWords.length) * 100}%` }}
               />
             </div>
+            
             {isPaused && (
-              <p className="text-center text-sm text-yellow-600 mt-2">
+              <p className="text-center text-sm text-yellow-600 mb-2">
                 已暂停 · 点击继续从当前单词播放
               </p>
             )}
+            
+            {/* 【修复】播放中也可以调节速度和间隔，通过 updatePlaybackParams 实时生效 */}
+            <div className="pt-2 border-t border-gray-100">
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-400">速度</span>
+                    <span className="text-xs font-medium text-coral-500">{playRate.toFixed(1)}x</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2.0"
+                    step="0.1"
+                    value={playRate}
+                    onChange={(e) => setPlayRate(parseFloat(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-coral-500"
+                  />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-400">间隔</span>
+                    <span className="text-xs font-medium text-coral-500">{playInterval}s</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="15"
+                    step="1"
+                    value={playInterval}
+                    onChange={(e) => setPlayInterval(parseInt(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-coral-500"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
           
           {/* Input Fields */}
@@ -521,7 +627,7 @@ export default function ErrorDictationPage() {
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {errorWords.map((word, idx) => (
                 <div
-                  key={idx}
+                  key={word.id}
                   className={`relative rounded-xl p-3 transition-all ${
                     idx === currentWordIndex
                       ? 'bg-coral-50 ring-2 ring-coral-400'
